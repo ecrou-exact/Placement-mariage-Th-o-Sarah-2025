@@ -1,0 +1,479 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container-fluid p-3 d-flex flex-column full-width " style="height: 90vh;" id="main-container">
+
+  <div class="mb-3">
+    <h5>Gestion des personnes et tables</h5>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <input type="text" class="form-control w-auto" style="min-width: 200px;" v-model="newPerson" placeholder="Nom de la personne">
+      <button class="btn btn-primary" @click="addPerson">
+        <i class="fas fa-user-plus"></i> Ajouter
+      </button>
+      <button class="btn btn-success" @click="addTable">
+        <i class="fas fa-plus-square"></i> Ajouter une table
+      </button>
+      <div class="d-flex align-items-center gap-2">
+        <label for="fileTxt" class="btn btn-secondary mb-0" style="min-width: 200px; text-align: center; cursor: pointer;">
+          📄 Lire tous les invites 
+        </label>
+        <input 
+          id="fileTxt" 
+          type="file" 
+          accept=".txt" 
+          @change="handleFileUpload" 
+          style="display: none;"
+        >
+      </div>
+    </div>
+  </div>
+
+  <div class="mb-3">
+    <h5>Aleatoire</h5>
+    <button class="btn btn-warning mb-3" @click="distributeRandomly">
+      <i class="fas fa-random"></i> Répartition aléatoire
+    </button>
+    <h5>Résumé</h5>
+    <button class="btn btn-outline-dark mb-3" @click="downloadTablesTxt">
+    <i class="fas fa-file-download"></i> Télécharger les tables (.txt)
+  </button>
+
+  </div>
+
+  <div class="mb-3">
+    <h5>Sauvegarde</h5>
+    <div class="d-flex gap-2 flex-wrap align-items-center mb-3">
+      <div>
+        <button class="btn btn-info" @click="downloadSave">
+        <i class="fas fa-download"></i> Télécharger la sauvegarde
+      </button>
+      </div>
+      
+      <div class="d-flex align-items-center gap-2 ">
+        <label for="fileJson" class="btn btn-secondary mb-0" style="min-width: 200px; text-align: center; cursor: pointer;">
+          <i class="fas fa-upload"></i> Charger une sauvegarde
+        </label>
+        <input 
+          id="fileJson" 
+          type="file" 
+          accept=".json" 
+          @change="loadSaveFile" 
+          style="display: none;"
+        >
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- Bandeau horizontal personnes non assignées -->
+  <div class="mb-3" style="max-height: 430px; border: 1px solid #ddd; padding: 10px; background: #f8f9fa; overflow-y: auto;">
+    <div class="d-flex justify-content-between align-items-center mb-2"> 
+      <input type="text" class="form-control w-auto" style="min-width: 200px;" v-model="searchQuery" placeholder="🔍 Rechercher une personne">
+    </div>
+    
+    <div class="d-flex gap-4 flex-wrap">
+      <template v-for="category in ['adulte', 'enfant', 'bebe' ,'marie']" :key="category">
+        <div style="min-width: 200px;">
+          <h6 :style="{color: categoryColors[category], textTransform: 'capitalize'}" class="mb-1">
+            [[ categoryLabels[category] ]] ([[ filteredByCategory(category).length ]])
+          </h6>
+          <div>
+            <span v-for="person in filteredByCategory(category)" :key="person.id"
+              class="badge rounded-pill"
+              :style="{backgroundColor: categoryColors[category] + 'cc', color: 'white', cursor: 'grab', marginRight: '5px', marginBottom: '5px', display: 'inline-block', fontSize: '0.8rem', padding: '0.3em 0.6em'}"
+              draggable="true"
+              @dragstart="onDragStartFromUnassigned(person)">
+              [[ person.name ]]
+            </span>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+
+  <!-- Zone tables (prend tout le reste) -->
+  <div class="flex-grow-1 position-relative border rounded p-2 tables-area" style="min-height: 0; background-color: #fff;" @dragover.prevent>
+    <div v-for="(table, tIndex) in tables" :key="table.id"
+         class="table-box border rounded bg-light p-2 position-absolute shadow"
+         :style="{ top: table.y + 'px', left: table.x + 'px', width: '220px', cursor: 'move' }"
+         @mousedown="startDragTable($event, table)"
+         @dragover.prevent
+         @drop="onDropToTable(table)">
+
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <input type="text" class="form-control form-control-sm" v-model="table.name" placeholder="Nom de la table">
+        <button class="btn btn-sm btn-danger ms-2" @click="deleteTable(tIndex)"><i class="fas fa-trash-alt"></i></button>
+      </div>
+
+      <div class="d-flex justify-content-between align-items-center mb-1">
+        <div class="input-group input-group-sm w-auto">
+          <span class="input-group-text">Capacité</span>
+          <input type="number" class="form-control" v-model.number="table.maxCapacity" min="1" style="width: 60px;">
+        </div>
+        <span class="badge bg-info">[[ table.people.length ]] / [[ table.maxCapacity ]]</span>
+      </div>
+
+      <ul class="list-group mt-2" style="max-height: 300px; overflow-y: auto;">
+        <li v-for="(person, i) in table.people" :key="person.id"
+            class="list-group-item d-flex justify-content-between align-items-center"
+            :style="{ backgroundColor: categoryColors[person.category] + '33', cursor: 'grab' }"
+            draggable="true"
+            @dragstart="onDragStartFromTable(table, i)">
+          [[ person.name ]]
+          <button class="btn btn-sm btn-outline-danger" @click="removePerson(table, i)">
+            <i class="fas fa-times"></i>
+          </button>
+        </li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block script %}
+<script type="module">
+const { createApp, ref, computed } = Vue
+
+createApp({
+  delimiters: ['[[', ']]'],
+  setup() {
+    const newPerson = ref('')
+    const unassignedPeople = ref([])
+    const tables = ref([])
+    const searchQuery = ref('')
+    const dragData = ref({ from: null, index: null, person: null })
+    const offset = ref({ x: 0, y: 0 })
+    const selectedTable = ref(null)
+
+    // Couleurs par catégorie
+    const categoryColors = {
+      adulte: '#007bff',  // bleu
+      enfant: '#fd7e14',  // orange
+      bebe: '#20c997'  ,   // vert menthe
+      marie: '#6f42c1' // violet
+    }
+
+    const categoryLabels = {
+      adulte: 'Adultes',
+      enfant: 'Enfants',
+      bebe: 'Bébés',
+      marie: 'Mariés'
+    }
+
+    // Personne est un objet { id, name, category }
+
+    const addPerson = () => {
+      if (newPerson.value.trim()) {
+        const persons = parseLine(newPerson.value.trim())
+        unassignedPeople.value.push(...persons)
+        newPerson.value = ''
+      }
+    }
+
+    function parseLine(line) {
+      const parts = line.trim().split(/\s+/)
+      if (parts.length < 2) return []
+
+      const nom = parts[0].toUpperCase()
+      let persons = []
+      let i = 1
+
+      while (i < parts.length) {
+        let prenom = parts[i]
+        let category = 'adulte' // défaut adulte
+
+        if (i + 1 < parts.length) {
+          const next = parts[i + 1].toLowerCase()
+          if (next === '+') {
+            category = 'adulte'
+            i += 2
+          } else if (next === '-') {
+            category = 'enfant'
+            i += 2
+          } else if (next === '_' ) {
+            category = 'bebe'
+            i += 2
+          } else if (next === '@' ) {
+            category = 'marie'
+            i += 2
+          } else {
+            i++
+          }
+        } else {
+          i++
+        }
+
+        const formattedPrenom = prenom.charAt(0).toUpperCase() + prenom.slice(1).toLowerCase()
+        persons.push({
+          id: Date.now() + Math.random(),
+          name: `${nom} ${formattedPrenom}`,
+          category
+        })
+      }
+      return persons
+    }
+
+    function filteredByCategory(category) {
+      return unassignedPeople.value.filter(p =>
+        p.category === category &&
+        p.name.toLowerCase().includes(searchQuery.value.toLowerCase())
+      )
+    }
+
+    const addTable = () => {
+      const id = Date.now()
+      tables.value.push({
+        id,
+        name: '',
+        x: 200,
+        y: 200,
+        people: [],
+        maxCapacity: 4
+      })
+    }
+
+    const deleteTable = (index) => {
+      const removed = tables.value.splice(index, 1)[0]
+      unassignedPeople.value.push(...removed.people)
+    }
+
+    const removePerson = (table, index) => {
+      unassignedPeople.value.push(table.people.splice(index, 1)[0])
+    }
+
+    const onDragStartFromUnassigned = (person) => {
+      dragData.value = { from: 'unassigned', person }
+    }
+
+    const onDragStartFromTable = (table, index) => {
+      dragData.value = { from: table, index, person: table.people[index] }
+    }
+
+    const onDropToTable = (table) => {
+      if (!dragData.value.person || table.people.length >= table.maxCapacity) {
+        dragData.value = { from: null, index: null, person: null }
+        return
+      }
+
+      if (dragData.value.from === 'unassigned') {
+        const idx = unassignedPeople.value.findIndex(p => p.id === dragData.value.person.id)
+        if (idx !== -1) unassignedPeople.value.splice(idx, 1)
+      } else if (dragData.value.from === table) {
+        dragData.value = { from: null, index: null, person: null }
+        return
+      } else {
+        dragData.value.from.people.splice(dragData.value.index, 1)
+      }
+
+      table.people.push(dragData.value.person)
+      dragData.value = { from: null, index: null, person: null }
+    }
+
+    const handleFileUpload = (event) => {
+      const file = event.target.files[0]
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        const lines = e.target.result.split('\n')
+        const processed = []
+
+        lines.forEach(line => {
+          const persons = parseLine(line.trim())
+          processed.push(...persons)
+        })
+
+        unassignedPeople.value.push(...processed)
+      }
+
+      reader.readAsText(file)
+    }
+
+    const startDragTable = (e, table) => {
+      selectedTable.value = table
+      offset.value = {
+        x: e.offsetX,
+        y: e.offsetY
+      }
+
+      const move = (eMove) => {
+        if (!selectedTable.value) return
+        selectedTable.value.x = eMove.pageX - offset.value.x - e.target.offsetParent.offsetLeft
+        selectedTable.value.y = eMove.pageY - offset.value.y - e.target.offsetParent.offsetTop
+      }
+
+      const up = () => {
+        selectedTable.value = null
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+      }
+
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    }
+
+    const distributeRandomly = () => {
+      const people = [...unassignedPeople.value]
+      unassignedPeople.value = []
+
+      const tablesSorted = [...tables.value].sort((a, b) => (b.maxCapacity - b.people.length) - (a.maxCapacity - a.people.length))
+
+      people.forEach(person => {
+        for (const table of tablesSorted) {
+          if (table.people.length < table.maxCapacity) {
+            table.people.push(person)
+            return
+          }
+        }
+        unassignedPeople.value.push(person)
+      })
+    }
+
+    // ==== NOUVEAU : sauvegarde et chargement complet ====
+
+    function isPersonAssigned(personId) {
+      return tables.value.some(table => table.people.some(p => p.id === personId))
+    }
+
+    const downloadSave = () => {
+      const saveData = {
+        tables: tables.value,
+        unassignedPeople: unassignedPeople.value.filter(p => !isPersonAssigned(p.id))
+      }
+      const jsonStr = JSON.stringify(saveData, null, 2)
+      const blob = new Blob([jsonStr], { type: "application/json" })
+      const url = URL.createObjectURL(blob)
+
+      // Générer un timestamp YYYYMMDD_HHMMSS
+      const now = new Date()
+      const pad = (n) => n.toString().padStart(2, '0')
+      const timestamp = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+
+      // Tu peux aussi ajouter une version manuelle ou auto-incrémentée ici si tu veux
+      const version = 'v1'
+
+      const filename = `sauvegarde_tables_personnes_${timestamp}_${version}.json`
+
+      const a = document.createElement("a")
+      a.href = url
+      a.download = filename
+      a.click()
+
+      URL.revokeObjectURL(url)
+    }
+
+
+    const loadSaveFile = (event) => {
+      const file = event.target.files[0]
+      if (!file) return
+
+      const reader = new FileReader()
+      reader.onload = e => {
+        try {
+          const data = JSON.parse(e.target.result)
+
+          if (data.tables && data.unassignedPeople) {
+            tables.value = data.tables
+            // Pour éviter doublons : merge personnes unassigned + personnes dans tables
+            const assignedIds = new Set()
+            tables.value.forEach(t => t.people.forEach(p => assignedIds.add(p.id)))
+
+            let allPeople = [...data.unassignedPeople]
+            tables.value.forEach(t => {
+              t.people.forEach(p => {
+                if (!assignedIds.has(p.id)) {
+                  allPeople.push(p)
+                  assignedIds.add(p.id)
+                }
+              })
+            })
+
+            // Filtrer doublons dans unassignedPeople
+            const uniquePeople = []
+            const idsSeen = new Set()
+            allPeople.forEach(p => {
+              if (!idsSeen.has(p.id)) {
+                uniquePeople.push(p)
+                idsSeen.add(p.id)
+              }
+            })
+            unassignedPeople.value = uniquePeople.filter(p => !isPersonAssigned(p.id))
+          } else {
+            alert("Fichier invalide : structure manquante.")
+          }
+        } catch (err) {
+          alert("Erreur lors de la lecture du fichier JSON.")
+        }
+      }
+      reader.readAsText(file)
+      event.target.value = null
+    }
+
+    const downloadTablesTxt = () => {
+      let content = ''
+
+      const assignedPersonIds = new Set()
+
+      tables.value.forEach((table, index) => {
+        content += `Table ${index + 1} - ${table.name || 'Sans nom'}\n`
+
+        if (table.people.length > 0) {
+          table.people.forEach((person, i) => {
+            content += `  ${i + 1}. ${person.name}\n`
+            assignedPersonIds.add(person.id)
+          })
+        } else {
+          content += `  (Aucune personne)\n`
+        }
+
+        content += '\n' // Saut de ligne entre les tables
+      })
+
+      // Récupérer toutes les personnes non placées
+      const unplacedPeople = unassignedPeople.value.filter(p => !assignedPersonIds.has(p.id))
+
+      if (unplacedPeople.length > 0) {
+        content += `--- Personnes non placées ---\n`
+        unplacedPeople.forEach((person, i) => {
+          content += `  ${i + 1}. ${person.name}\n`
+        })
+      }
+
+      // Création du fichier et téléchargement
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = 'plan_tables.txt'
+      link.click()
+      URL.revokeObjectURL(link.href)
+    }
+
+
+    return {
+      newPerson,
+      unassignedPeople,
+      tables,
+      searchQuery,
+      addPerson,
+      addTable,
+      deleteTable,
+      removePerson,
+      onDragStartFromUnassigned,
+      onDragStartFromTable,
+      onDropToTable,
+      handleFileUpload,
+      startDragTable,
+      distributeRandomly,
+      filteredByCategory,
+      categoryColors,
+      categoryLabels,
+      downloadSave,
+      loadSaveFile,
+      downloadTablesTxt
+    }
+  }
+}).mount('#main-container')
+</script>
+{% endblock %}
